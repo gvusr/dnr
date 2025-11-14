@@ -1,0 +1,513 @@
+<template>
+  <div>
+    <DataTable
+      ref="myTable"
+      :columns="columns"
+      :data="rows"
+      :rowEvents="rowEvents"
+      :cellEvents="cellEvents"
+      enableGlobalSearch
+      enableColumnFilter
+      enablePagination
+    />
+
+    <button @click="highlightRow(2)">Highlight Row 2</button>
+    <button @click="focusStatusCell(1)">Focus 'status' cell (Row 1)</button>
+  </div>
+</template>
+
+<script>
+export default {
+  data() {
+    return {
+      columns: [
+        { key: "name", label: "Name" },
+        { key: "status", label: "Status" },
+      ],
+      rows: [
+        { name: "Alice", status: "Active" },
+        { name: "Bob", status: "Pending" },
+        { name: "Charlie", status: "Inactive" },
+      ],
+      rowEvents: {
+        click: ({ rowData }) => console.log("Row Clicked", rowData),
+      },
+      cellEvents: {
+        status: {
+          click: ({ rowData }) => console.log("Status Cell Clicked", rowData),
+          focus: ({ payload }) => alert(`Focusing status cell for ${payload?.rowName}`),
+        },
+      },
+    };
+  },
+  methods: {
+    highlightRow(rowIndex) {
+      this.$refs.myTable.emitToRow(rowIndex, "highlight", { color: "yellow" });
+    },
+    focusStatusCell(rowIndex) {
+      const rowName = this.rows[rowIndex].name;
+      this.$refs.myTable.emitToCell(rowIndex, "status", "focus", { rowName });
+    },
+  },
+};
+</script>
+
+DCVue
+<template>
+  <div
+    class="data-cell"
+    v-for="(handler, eventName) in eventListeners"
+    v-on:[eventName]="(e) => handleEvent(eventName, e)"
+  >
+    <slot />
+  </div>
+</template>
+
+<script>
+export default {
+  name: "DataCell",
+  props: {
+    cellEvents: { type: Object, default: () => ({}) },
+    rowEvents: { type: Object, default: () => ({}) },
+    rowIndex: Number,
+    colKey: String,
+    rowData: Object,
+  },
+  emits: ["cell-event"],
+  computed: {
+    eventListeners() {
+      const cellKeys = Object.keys(this.cellEvents);
+      const rowKeys = Object.keys(this.rowEvents);
+      return [...new Set([...cellKeys, ...rowKeys])].reduce((acc, key) => {
+        acc[key] = true;
+        return acc;
+      }, {});
+    },
+  },
+  methods: {
+    handleEvent(eventName, event) {
+      const payload = {
+        eventName,
+        event,
+        rowIndex: this.rowIndex,
+        colKey: this.colKey,
+        rowData: this.rowData,
+      };
+
+      if (this.cellEvents[eventName]) {
+        this.cellEvents[eventName](payload);
+      } else if (this.rowEvents[eventName]) {
+        this.$emit("cell-event", payload);
+      }
+    },
+
+    /** 🔽 Called when parent (DataRow/Table) dispatches event down */
+    onParentEvent(eventName, payload) {
+      if (this.cellEvents[eventName]) {
+        this.cellEvents[eventName]({
+          eventName,
+          fromParent: true,
+          payload,
+          rowData: this.rowData,
+          colKey: this.colKey,
+        });
+      }
+    },
+  },
+};
+</script>
+
+DRVue
+<template>
+  <div
+    class="data-row"
+    :class="{ selected: isSelected }"
+    @click="handleClick"
+  >
+    <slot />
+  </div>
+</template>
+
+<script>
+export default {
+  name: "DataRow",
+  props: {
+    rowIndex: Number,
+    rowData: Object,
+  },
+  emits: ["row-event", "row-click", "row-select"],
+  data() {
+    return {
+      isSelected: false,
+    };
+  },
+  methods: {
+    handleClick(event) {
+      if (event.ctrlKey) {
+        // Ctrl + Click → Select/deselect row
+        this.isSelected = !this.isSelected;
+        this.$emit("row-select", {
+          rowIndex: this.rowIndex,
+          rowData: this.rowData,
+          isSelected: this.isSelected,
+        });
+      } else {
+        // Normal Click → Popup trigger
+        this.$emit("row-click", {
+          rowIndex: this.rowIndex,
+          rowData: this.rowData,
+        });
+      }
+    },
+
+    // Downward event propagation
+    onParentEvent(eventName, payload) {
+      if (eventName === "highlight" && payload?.rowIndex === this.rowIndex) {
+        this.isSelected = true;
+      }
+      this.$children.forEach((child) => {
+        if (child.$options.name === "DataCell") {
+          child.onParentEvent(eventName, payload);
+        }
+      });
+    },
+  },
+};
+</script>
+
+<style scoped>
+.data-row {
+  display: flex;
+  border-bottom: 1px solid #eee;
+  transition: background-color 0.25s ease;
+  cursor: pointer;
+}
+
+/* 🟢 Hover effect only for non-selected rows */
+.data-row:hover:not(.selected) {
+  background-color: #f1f8ff;
+}
+
+/* 🔵 Selected row color */
+.data-row.selected {
+  background-color: #cfe5ff !important;
+}
+</style>
+
+
+DHCVue
+<template>
+  <div
+    class="data-header-cell"
+    draggable="true"
+    @dragstart="handleDragStart"
+    @dragover.prevent="handleDragOver"
+    @drop.prevent="handleDrop"
+  >
+    <span class="header-content">
+      <slot />
+      <!-- Sorting indicators (if enabled) -->
+      <span v-if="sortable" class="sort-icons" @click.stop="toggleSort">
+        <span v-if="sortState === 'asc'">▲</span>
+        <span v-else-if="sortState === 'desc'">▼</span>
+        <span v-else>⇅</span>
+      </span>
+    </span>
+
+    <!-- ❌ Close Button -->
+    <button class="close-btn" @click.stop="emitRemoveColumn">✕</button>
+  </div>
+</template>
+
+<script>
+export default {
+  name: "DataHeaderCell",
+  props: {
+    index: Number,
+    sortable: Boolean,
+    sortState: String,
+    columnKey: String,
+  },
+  emits: ["sort", "drag-start", "drop", "remove-column"],
+  methods: {
+    toggleSort() {
+      let nextOrder = null;
+      if (this.sortState === null) nextOrder = "asc";
+      else if (this.sortState === "asc") nextOrder = "desc";
+      else nextOrder = null;
+      this.$emit("sort", nextOrder);
+    },
+    handleDragStart(event) {
+      this.$emit("drag-start", { index: this.index, event });
+    },
+    handleDragOver(event) {
+      this.$emit("drag-over", { index: this.index, event });
+    },
+    handleDrop(event) {
+      this.$emit("drop", { index: this.index, event });
+    },
+    emitRemoveColumn() {
+      this.$emit("remove-column", this.columnKey);
+    },
+  },
+};
+</script>
+
+<style scoped>
+.data-header-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background-color: #f7f9fc;
+  border-bottom: 1px solid #ccc;
+  border-right: 1px solid #e0e0e0;
+  font-weight: 600;
+  position: relative;
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sort-icons {
+  font-size: 12px;
+  cursor: pointer;
+  color: #666;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 14px;
+  margin-left: 5px;
+  transition: color 0.2s ease;
+}
+.close-btn:hover {
+  color: #ff4d4f;
+}
+</style>
+
+
+DTVue
+<template>
+  <div class="data-table" :class="layoutClass">
+    <!-- Global Search -->
+    <div v-if="enableGlobalSearch" class="global-search">
+      <input
+        v-model="globalSearch"
+        type="text"
+        placeholder="Search all columns..."
+        class="search-input"
+      />
+    </div>
+
+    <div class="table-horizontal">
+      <div class="table-header">
+        <!-- Header Row -->
+        <DataRow class="header-row">
+          <DataHeaderCell
+            v-for="(col, i) in internalColumns"
+            :key="col.key"
+            :index="i"
+            :columnKey="col.key"
+            :sortable="true"
+            :sortState="sortConfig.key === col.key ? sortConfig.order : null"
+            @sort="(order) => handleSort(col, order)"
+            @remove-column="removeColumn"
+          >
+            {{ col.label }}
+          </DataHeaderCell>
+        </DataRow>
+
+        <!-- Column Filters -->
+        <DataRow v-if="enableColumnFilter" class="filter-row">
+          <DataCell v-for="col in internalColumns" :key="col.key">
+            <input
+              v-model="columnFilters[col.key]"
+              type="text"
+              class="column-filter"
+              placeholder="Filter..."
+            />
+          </DataCell>
+        </DataRow>
+      </div>
+
+      <!-- Table Body -->
+      <div class="table-body">
+        <DataRow
+          v-for="(row, rIndex) in paginatedData"
+          :key="rIndex"
+          :rowIndex="rIndex"
+          :rowData="row"
+          @row-click="handleRowClick"
+          @row-select="handleRowSelect"
+        >
+          <DataCell
+            v-for="col in internalColumns"
+            :key="col.key"
+            :rowData="row"
+            :colKey="col.key"
+          >
+            {{ row[col.key] }}
+          </DataCell>
+        </DataRow>
+      </div>
+    </div>
+
+    <!-- Pagination -->
+    <PaginationComponent
+      v-if="enablePagination"
+      :total-records="filteredData.length"
+      :records-per-page="recordsPerPage"
+      :current-page="currentPage"
+      @update:recordsPerPage="recordsPerPage = $event"
+      @update:currentPage="currentPage = $event"
+    />
+
+    <!-- Reset Columns -->
+    <div class="table-actions">
+      <button @click="resetColumns" class="reset-btn">Reset Columns</button>
+    </div>
+
+    <!-- Popup -->
+    <div v-if="popupData" class="popup-backdrop" @click="closePopup">
+      <div class="popup" @click.stop>
+        <h3>Row Details</h3>
+        <pre>{{ popupData }}</pre>
+        <button @click="closePopup">Close</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import DataRow from "./DataRow.vue";
+import DataCell from "./DataCell.vue";
+import DataHeaderCell from "./DataHeaderCell.vue";
+import PaginationComponent from "./PaginationComponent.vue";
+
+export default {
+  name: "DataTable",
+  components: { DataRow, DataCell, DataHeaderCell, PaginationComponent },
+  props: {
+    layout: { type: String, default: "horizontal" },
+    data: { type: Array, default: () => [] },
+    columns: { type: Array, default: () => [] },
+    enablePagination: { type: Boolean, default: false },
+    enableGlobalSearch: { type: Boolean, default: false },
+    enableColumnFilter: { type: Boolean, default: false },
+    rowEvents: { type: Object, default: () => ({}) },
+    cellEvents: { type: Object, default: () => ({}) },
+  },
+  data() {
+    return {
+      internalColumns: [...this.columns],
+      originalColumns: [...this.columns],
+      currentPage: 1,
+      recordsPerPage: 5,
+      globalSearch: "",
+      columnFilters: {},
+      sortConfig: { key: null, order: null },
+      selectedRows: [],
+      popupData: null,
+    };
+  },
+  computed: {
+    layoutClass() {
+      return this.layout === "horizontal" ? "horizontal-layout" : "vertical-layout";
+    },
+    filteredData() {
+      let result = [...this.data];
+
+      // Global Search
+      if (this.enableGlobalSearch && this.globalSearch.trim()) {
+        const search = this.globalSearch.toLowerCase();
+        result = result.filter((row) =>
+          Object.values(row).some((v) => String(v).toLowerCase().includes(search))
+        );
+      }
+
+      // Column Filters
+      if (this.enableColumnFilter) {
+        Object.entries(this.columnFilters).forEach(([key, value]) => {
+          if (value && value.trim()) {
+            result = result.filter((row) =>
+              String(row[key]).toLowerCase().includes(value.toLowerCase())
+            );
+          }
+        });
+      }
+
+      // Sorting
+      if (this.sortConfig.key && this.sortConfig.order) {
+        const { key, order } = this.sortConfig;
+        result.sort((a, b) => {
+          const valA = a[key];
+          const valB = b[key];
+          if (valA == null) return 1;
+          if (valB == null) return -1;
+          if (typeof valA === "number" && typeof valB === "number") {
+            return order === "asc" ? valA - valB : valB - valA;
+          }
+          return order === "asc"
+            ? String(valA).localeCompare(String(valB))
+            : String(valB).localeCompare(String(valA));
+        });
+      }
+
+      return result;
+    },
+    paginatedData() {
+      if (!this.enablePagination) return this.filteredData;
+      const start = (this.currentPage - 1) * this.recordsPerPage;
+      return this.filteredData.slice(start, start + this.recordsPerPage);
+    },
+  },
+  methods: {
+    removeColumn(columnKey) {
+      this.internalColumns = this.internalColumns.filter((col) => col.key !== columnKey);
+    },
+    resetColumns() {
+      this.internalColumns = [...this.originalColumns];
+      this.sortConfig = { key: null, order: null };
+    },
+    handleSort(col, newOrder) {
+      if (newOrder === null) {
+        this.sortConfig = { key: null, order: null };
+      } else {
+        this.sortConfig = { key: col.key, order: newOrder };
+      }
+    },
+    handleRowClick({ rowData }) {
+      this.popupData = rowData;
+    },
+    handleRowSelect({ rowData, isSelected }) {
+      if (isSelected) this.selectedRows.push(rowData);
+      else this.selectedRows = this.selectedRows.filter((r) => r !== rowData);
+    },
+    closePopup() {
+      this.popupData = null;
+    },
+  },
+};
+</script>
+
+<style scoped>
+.reset-btn {
+  margin-top: 10px;
+  background: #007bff;
+  color: white;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.reset-btn:hover {
+  background: #0056b3;
+}
+</style>
