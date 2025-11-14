@@ -1,0 +1,76 @@
+<template>
+  <div class="pagination">
+    <div class="pagination-left">
+      <label>Records per page:</label>
+      <select v-model.number="localPerPage" @change="updatePerPage">
+        <option v-for="n in [5, 10, 20, 50]" :key="n" :value="n">{{ n }}</option>
+      </select>
+    </div>
+
+    <div class="pagination-center">
+      <button :disabled="currentPage === 1" @click="prevPage">Prev</button>
+      <span>Page {{ currentPage }}</span>
+      <button
+        :disabled="currentPage === totalPages"
+        @click="nextPage"
+      >
+        Next
+      </button>
+    </div>
+
+    <div class="pagination-right">
+      <span>Total: {{ totalRecords }}</span>
+    </div>
+  </div>
+</template>
+
+<script>
+export default {
+  name: "PaginationComponent",
+  props: {
+    totalRecords: Number,
+    recordsPerPage: Number,
+    currentPage: Number,
+  },
+  emits: ["update:recordsPerPage", "update:currentPage"],
+  data() {
+    return { localPerPage: this.recordsPerPage };
+  },
+  computed: {
+    totalPages() {
+      return Math.ceil(this.totalRecords / this.localPerPage) || 1;
+    },
+  },
+  methods: {
+    updatePerPage() {
+      this.$emit("update:recordsPerPage", this.localPerPage);
+    },
+    nextPage() {
+      if (this.currentPage < this.totalPages)
+        this.$emit("update:currentPage", this.currentPage + 1);
+    },
+    prevPage() {
+      if (this.currentPage > 1)
+        this.$emit("update:currentPage", this.currentPage - 1);
+    },
+  },
+};
+</script>
+
+<style scoped>
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px;
+  border-top: 1px solid #ddd;
+  margin-top: 10px;
+  align-items: center;
+}
+select {
+  padding: 3px;
+}
+button {
+  padding: 3px 8px;
+  margin: 0 5px;
+}
+</style>
